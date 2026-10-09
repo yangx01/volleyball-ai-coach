@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>排球 AI 私教 · 单文件版</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; font-family:-apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background:#0f1419; color:#e8eaed; }
+  .wrap { max-width:520px; margin:0 auto; padding:12px; }
+  h1 { font-size:19px; margin:6px 0 2px; }
+  .sub { font-size:12px; color:#9aa0a6; margin-bottom:10px; line-height:1.5; }
+  .modes { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px; }
+  .modes button { flex:1; min-width:64px; padding:10px 4px; font-size:13px; border:none;
+    border-radius:10px; background:#2a2f36; color:#e8eaed; cursor:pointer; }
+  .modes button.on { background:#ff6b35; color:#fff; font-weight:700; }
+  .video-wrap { position:relative; width:100%; aspect-ratio:3/4; background:#000;
+    border-radius:12px; overflow:hidden; }
+  video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
+  canvas { position:absolute; inset:0; width:100%; height:100%; transform:scaleX(-1); }
+  .overlay { position:absolute; left:0; right:0; top:10px; text-align:center; pointer-events:none; }
+  .big { font-size:21px; font-weight:800; padding:8px 10px; border-radius:10px;
+    display:inline-block; background:rgba(0,0,0,.45); }
+  .good { color:#34d399; } .warn { color:#fbbf24; } .bad { color:#f87171; }
+  .status { font-size:12px; color:#9aa0a6; margin:8px 0; min-height:16px; }
+  .metrics { display:flex; gap:8px; margin:8px 0; }
+  .metric { flex:1; background:#1a1f26; border-radius:10px; padding:8px 4px; text-align:center; }
+  .metric b { display:block; font-size:18px; color:#ff6b35; }
+  .metric span { font-size:11px; color:#9aa0a6; }
+
+  /* 力量计数面板 */
+  .cfg { display:flex; flex-wrap:wrap; gap:6px; background:#1a1f26; border-radius:10px; padding:8px; margin:6px 0; font-size:12px; }
+  .cfg label { display:flex; flex-direction:column; gap:2px; flex:1; min-width:90px; color:#9aa0a6; }
+  .cfg select, .cfg input { background:#2a2f36; color:#e8eaed; border:none; border-radius:6px; padding:6px; font-size:13px; }
+  .countBig { display:flex; gap:10px; margin:8px 0; }
+  .countBig div { flex:1; background:#1a1f26; border-radius:10px; padding:10px; text-align:center; font-size:13px; color:#9aa0a6; }
+  .countBig b { display:block; font-size:30px; color:#ff6b35; }
+  #restBox { background:#243; color:#9fe; border-radius:10px; padding:10px; text-align:center; font-size:15px; margin:6px 0; }
+  #restBox b { font-size:24px; color:#fff; }
+  .ctl { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
+  .ctl button { flex:1; min-width:70px; padding:11px 4px; font-size:14px; border:none; border-radius:10px;
+    background:#2a2f36; color:#e8eaed; cursor:pointer; }
+  .ctl #startCount { background:#ff6b35; color:#fff; font-weight:700; }
+  .ctl label.vcs { flex:1; min-width:70px; display:flex; align-items:center; justify-content:center; gap:4px;
+    background:#2a2f36; border-radius:10px; font-size:13px; }
+
+  .hidden { display:none; }
+  #startBtn { width:100%; padding:14px; font-size:16px; font-weight:700; border:none;
+    border-radius:12px; background:#ff6b35; color:#fff; margin:10px 0; }
+  details { background:#1a1f26; border-radius:10px; padding:10px 12px; margin-top:10px; font-size:13px; line-height:1.6; }
+  details summary { cursor:pointer; font-weight:700; color:#ff6b35; }
+  details li { margin:4px 0; }
+  .note { font-size:11px; color:#7a8086; margin-top:10px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🏐 排球 AI 私教</h1>
+  <div class="sub">摄像头 + 骨骼识别，实时看扣球动作大框架，并支持力量动作自动计数 + 组次提醒。
+  纯前端单文件，可离线（首次需联网加载识别模型）。</div>
+
+  <button id="startBtn">📷 开启摄像头开始</button>
+
+  <div id="panel" class="hidden">
+    <div class="modes">
+      <button data-m="0" class="on">综合</button>
+      <button data-m="1">起跳深蹲</button>
+      <button data-m="2">挥臂过顶</button>
+      <button data-m="3">落地缓冲</button>
+      <button data-m="4">力量计数</button>
+    </div>
+
+    <div class="video-wrap">
+      <video id="video" playsinline></video>
+      <canvas id="canvas"></canvas>
+      <div class="overlay"><span id="tip" class="big warn">准备中…</span></div>
+    </div>
+    <div class="status" id="status">识别中…</div>
+
+    <!-- 模式0-3 指标 -->
+    <div class="metrics" id="metrics">
+      <div class="metric"><b id="mKnee">–</b><span>膝角°</span></div>
+      <div class="metric"><b id="mHip">–</b><span>髋角°</span></div>
+      <div class="metric"><b id="mArm">–</b><span>手/肩高度</span></div>
+    </div>
+
+    <!-- 模式4 力量计数 -->
+    <div id="countPanel" class="hidden">
+      <div class="cfg">
+        <label>动作类型
+          <select id="exType">
+            <option value="squat">深蹲类(深蹲/RDL/保加利亚/后蹲)</option>
+            <option value="calf">提踵(站姿/单腿)·估算</option>
+            <option value="jump">箱跳/蹲跳·估算</option>
+            <option value="carry">农夫行走(计时)</option>
+          </select>
+        </label>
+        <label>组数<input id="cfgSets" type="number" value="3" min="1" max="10"></label>
+        <label>每x次/秒<input id="cfgReps" type="number" value="8" min="1" max="60"></label>
+        <label>休息秒<input id="cfgRest" type="number" value="60" min="0" max="300"></label>
+      </div>
+      <div class="countBig">
+        <div>第 <b id="curSet">1</b>/<span id="totSet">3</span> 组</div>
+        <div>本组 <b id="curRep">0</b>/<span id="totRep">8</span> 次</div>
+      </div>
+      <div id="restBox" class="hidden">休息中：<b id="restSec">60</b> 秒</div>
+      <div class="ctl">
+        <button id="startCount">▶ 开始/继续</button>
+        <button id="resetCount">↺ 重置</button>
+        <button id="minus">−1</button>
+        <button id="plus">+1</button>
+        <label class="vcs"><input type="checkbox" id="voiceOn" checked> 语音</label>
+      </div>
+      <div class="sub">正对镜头、单人、光线好；慢动作(深蹲类)最准，提踵/箱跳为估算仅供参考。</div>
+    </div>
+  </div>
+
+  <details open>
+    <summary>📋 三个关键点 · 白话自查清单（摄像头看不准时照这个）</summary>
+    <ul>
+      <li><b>起跳深蹲</b>：像坐椅子一样下蹲，大腿至少蹲到和地面平行（膝角≈90°），背挺直别弓。</li>
+      <li><b>挥臂过顶</b>：扣球时手臂要举到<b>头顶上方</b>再往下甩，在最高点击球。手没过头顶=击球点太低。</li>
+      <li><b>落地缓冲</b>：落地先<b>前脚掌</b>着地，膝盖微屈像弹簧慢慢吸收，别直腿砸地。膝前移别超脚尖太多。</li>
+      <li><b>做错即停</b>：弓背 / 手不过头 / 落地膝盖内扣或直腿硬砸 → 立刻减轻或停下重做。</li>
+    </ul>
+  </details>
+
+  <div class="note">
+    ⚠️ 说明：AI 只能看动作"大框架"。摄像头需在 https 或 localhost 下开启，手机上请把本文件放到支持 https 的静态托管后打开。
+    模型约几 MB，首次加载需联网，之后浏览器缓存可离线。
+  </div>
+</div>
+
+<script type="module">
+let poseLandmarker=null, videoEl, canvasEl, ctx, raf=null, mode=0;
+let prevKnee=null;
+const CONNECTIONS=[[0,1],[1,2],[2,3],[3,7],[0,4],[4,5],[5,6],[6,8],[9,10],
+ [11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],
+ [23,25],[25,27],[27,29],[27,31],[29,31],[24,26],[26,28],[28,30],[28,32],[30,32]];
+
+const $=id=>document.getElementById(id);
+const startBtn=$('startBtn'), panel=$('panel'), tip=$('tip'), statusEl=$('status');
+const metrics=$('metrics'), countPanel=$('countPanel');
+
+function setTip(t,c){ tip.textContent=t; tip.className='big '+c; }
+function angle(a,b,c){ const ab={x:a.x-b.x,y:a.y-b.y},cb={x:c.x-b.x,y:c.y-b.y};
+  const dot=ab.x*cb.x+ab.y*cb.y,mag=Math.hypot(ab.x,ab.y)*Math.hypot(cb.x,cb.y);
+  return mag===0?0:Math.acos(Math.max(-1,Math.min(1,dot/mag)))*180/Math.PI; }
+
+function speak(t){ if(!$('voiceOn').checked) return; try{
+  const u=new SpeechSynthesisUtterance(t); u.lang='zh-CN'; u.rate=1.15; speechSynthesis.speak(u);}catch(e){} }
+
+// ---------- 力量计数状态 ----------
+let counting=false, cSet=1, cRep=0, cResting=false, cRestEnd=0, lastRepT=0;
+let squatPhase='up', calfPhase='down', jumpPhase='down', carryStart=0;
+let baseHip=null, baseLift=null;
+
+function resetCount(){ counting=false; cSet=1; cRep=0; cResting=false; baseHip=null; baseLift=null;
+  squatPhase='up'; calfPhase='down'; jumpPhase='down';
+  $('curSet').textContent=cSet; $('totSet').textContent=$('cfgSets').value;
+  $('curRep').textContent=0; $('totRep').textContent=$('cfgReps').value;
+  $('restBox').classList.add('hidden'); setTip('已重置','warn'); }
+
+function repDone(){
+  const sets=+$('cfgSets').value, reps=+$('cfgReps').value;
+  $('curRep').textContent=cRep;
+  if(cRep>=reps){
+    if(cSet>=sets){ speak('全部完成，辛苦了'); counting=false; setTip('全部完成 🎉','good');
+      $('restBox').classList.add('hidden'); }
+    else { cResting=true; const r=+$('cfgRest').value;
+      cRestEnd=performance.now()+r*1000; speak('第'+cSet+'组完成，休息'+r+'秒');
+      setTip('第'+cSet+'组完成 · 休息','good'); }
+  }
+}
+function setDone(){
+  if(cResting && performance.now()>=cRestEnd){ cResting=false; cSet++; cRep=0;
+    $('curSet').textContent=cSet; $('curRep').textContent=0;
+    $('restBox').classList.add('hidden');
+    if(counting) speak('休息结束，第'+cSet+'组开始'); setTip('第'+cSet+'组 · 加油','warn'); }
+  if(cResting){ const s=Math.ceil((cRestEnd-performance.now())/1000);
+    $('restSec').textContent=Math.max(0,s); }
+}
+
+function countAnalyze(lm){
+  if(!counting){ setTip('点「开始」计数','warn'); return; }
+  setDone();
+  if(cResting){ setTip('休息中…','good'); return; }
+  const v=p=>lm[p].visibility>0.3?lm[p]:null;
+  const LS=v(11),RS=v(12),LK=v(25),RK=v(26),LH=v(23),RH=v(24),LA=v(27),RA=v(28),
+        LHeel=v(29),RHeel=v(31);
+  const type=$('exType').value;
+  if(type==='carry'){ // 计时
+    if(!carryStart) carryStart=performance.now();
+    const secs=Math.floor((performance.now()-carryStart)/1000);
+    cRep=secs; $('curRep').textContent=cRep;
+    if(secs>=+$('cfgReps').value) repDone();
+    setTip('计时 '+secs+' 秒','warn'); return;
+  }
+  if(!LH||!RH||!LK||!RK){ setTip('侧身/遮挡，转正','warn'); return; }
+  if(type==='squat'){
+    const knee=(angle(LH,LK,LA)+angle(RH,RK,RA))/2;
+    if(squatPhase==='up' && knee<100) squatPhase='down';
+    else if(squatPhase==='down' && knee>155){
+      squatPhase='up';
+      if(performance.now()-lastRepT>300){ cRep++; lastRepT=performance.now(); repDone(); }
+    }
+    setTip(squatPhase==='down'?'下蹲 ✓':'站起', squatPhase==='down'?'good':'warn');
+  } else if(type==='calf'){
+    if(!LA||!RA||!LHeel||!RHeel){ setTip('脚看不清','warn'); return; }
+    const lift=((LA.y-LHeel.y)+(RA.y-RHeel.y))/2; // 踮脚变正
+    if(baseLift===null) baseLift=lift;
+    const d=lift-baseLift;
+    if(calfPhase==='down' && d>0.03) calfPhase='up';
+    else if(calfPhase==='up' && d<-0.01){ calfPhase='down';
+      if(performance.now()-lastRepT>250){ cRep++; lastRepT=performance.now(); repDone(); } }
+    setTip(calfPhase==='up'?'踮起 ✓ (估算)':'落下', calfPhase==='up'?'good':'warn');
+  } else if(type==='jump'){
+    const hip=((LH.y+RH.y)/2);
+    if(baseHip===null) baseHip=hip;
+    const d=hip-baseHip; // 跳上为负
+    if(jumpPhase==='down' && d<-0.05) jumpPhase='up';
+    else if(jumpPhase==='up' && d>-0.02){ jumpPhase='down';
+      if(performance.now()-lastRepT>300){ cRep++; lastRepT=performance.now(); repDone(); } }
+    setTip(jumpPhase==='up'?'跳上 ✓ (估算)':'落回', jumpPhase==='up'?'good':'warn');
+  }
+}
+
+async function start(){
+  startBtn.disabled=true; startBtn.textContent='⏳ 加载识别模型…';
+  try{
+    const vision=await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+    const fileset=await vision.FilesetResolver.forVisionTasks(
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    poseLandmarker=await vision.PoseLandmarker.createFromOptions(fileset,{
+      baseOptions:{ modelAssetPath:
+        'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+        delegate:'GPU' }, runningMode:'VIDEO', numPoses:1 });
+  }catch(e){ startBtn.textContent='❌ 模型加载失败（需联网首次）';
+    statusEl.textContent='错误：'+e.message; startBtn.disabled=false; return; }
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia(
+      { video:{ facingMode:'user', width:{ideal:720}, height:{ideal:960} }, audio:false });
+    videoEl.srcObject=stream; await videoEl.play();
+  }catch(e){ statusEl.textContent='⚠️ 摄像头开启失败：'+e.message+'（需 https/localhost 且授权）';
+    startBtn.disabled=false; return; }
+  panel.classList.remove('hidden'); startBtn.classList.add('hidden');
+  statusEl.textContent='识别中…（像照镜子，已镜像）';
+  loop();
+}
+
+function loop(){
+  if(videoEl.readyState>=2 && poseLandmarker){
+    const w=videoEl.videoWidth,h=videoEl.videoHeight;
+    if(canvasEl.width!==w){ canvasEl.width=w; canvasEl.height=h; }
+    const res=poseLandmarker.detectForVideo(videoEl, performance.now());
+    draw(res,w,h); analyze(res);
+  }
+  raf=requestAnimationFrame(loop);
+}
+function draw(res,w,h){
+  ctx.clearRect(0,0,canvasEl.width,canvasEl.height);
+  if(!res.landmarks||!res.landmarks.length) return;
+  const lm=res.landmarks[0];
+  ctx.strokeStyle='#ff6b35'; ctx.lineWidth=Math.max(2,w/200);
+  for(const [a,b] of CONNECTIONS){ if(lm[a].visibility>0.3&&lm[b].visibility>0.3){
+    ctx.beginPath(); ctx.moveTo(lm[a].x*w,lm[a].y*h); ctx.lineTo(lm[b].x*w,lm[b].y*h); ctx.stroke(); } }
+  ctx.fillStyle='#34d399';
+  for(const p of lm){ if(p.visibility>0.3){ ctx.beginPath();
+    ctx.arc(p.x*w,p.y*h,Math.max(2,w/180),0,Math.PI*2); ctx.fill(); } }
+}
+function analyze(res){
+  if(mode===4){ if(res.landmarks&&res.landmarks.length) countAnalyze(res.landmarks[0]);
+    else setTip('没检测到人','warn'); return; }
+  if(!res.landmarks||!res.landmarks.length){ setTip('没检测到人','warn'); return; }
+  const lm=res.landmarks[0];
+  const v=p=>lm[p].visibility>0.3?lm[p]:null;
+  const LS=v(11),RS=v(12),LE=v(13),RE=v(14),LW=v(15),RW=v(16),LH=v(23),RH=v(24),
+        LK=v(25),RK=v(26),LA=v(27),RA=v(28),N=v(0);
+  if(!LS||!RS||!LK||!RK||!LH||!RH){ setTip('侧身/遮挡，转正面对镜头','warn'); return; }
+  const knee=(angle(LH,LK,LA)+angle(RH,RK,RA))/2;
+  const hip=(angle(LS,LH,LK)+angle(RS,RH,RK))/2;
+  const shY=(LS.y+RS.y)/2, wristHi=Math.min(LW?LW.y:1,RW?RW.y:1);
+  const armRatio=wristHi-shY;
+  $('mKnee').textContent=Math.round(knee); $('mHip').textContent=Math.round(hip);
+  $('mArm').textContent=armRatio<0?'过头顶':(armRatio*100).toFixed(0)+'%';
+  if(mode===1){
+    if(knee>150) setTip('站立/未蹲 — 先下蹲','warn');
+    else if(knee>95) setTip('半蹲，再往下','warn');
+    else setTip('蹲到位 ✅ 背挺直','good');
+  } else if(mode===2){
+    if(armRatio<-0.03) setTip('挥臂过头顶 ✅','good');
+    else if(armRatio<0.05) setTip('差不多到头了','warn');
+    else setTip('手没过头顶 — 击球点低','bad');
+  } else if(mode===3){
+    if(prevKnee!==null){ const d=knee-prevKnee;
+      if(d<-25) setTip('腿突然软 — 硬着陆⚠️','bad');
+      else if(knee<100&&Math.abs(d)<15) setTip('落地弯膝 ✅ 缓冲好','good');
+      else if(knee>150) setTip('直腿砸地 — 缓一缓','bad');
+      else setTip('保持弯膝落地','warn'); }
+    else setTip('跳一下看落地','warn');
+    prevKnee=knee;
+  } else {
+    let msg='',cls='warn';
+    if(knee<95){ msg='蹲到位 '; cls='good'; }
+    if(armRatio<-0.03){ msg+='挥臂过顶 '; cls='good'; }
+    if(knee>150&&armRatio>=0) msg='面对镜头做动作';
+    setTip(msg||'面对镜头做动作',cls);
+  }
+}
+
+document.querySelectorAll('.modes button').forEach(b=>{
+  b.addEventListener('click',()=>{
+    document.querySelectorAll('.modes button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on'); mode=+b.dataset.m; prevKnee=null;
+    const isC=mode===4;
+    countPanel.classList.toggle('hidden',!isC);
+    metrics.classList.toggle('hidden',isC);
+    if(isC) resetCount(); else setTip('准备中…','warn');
+  });
+});
+$('startCount').addEventListener('click',()=>{
+  counting=true; if($('exType').value==='carry') carryStart=performance.now();
+  setTip('计数中…','warn'); });
+$('resetCount').addEventListener('click',resetCount);
+$('minus').addEventListener('click',()=>{ if(cRep>0){ cRep--; $('curRep').textContent=cRep; } });
+$('plus').addEventListener('click',()=>{ cRep++; $('curRep').textContent=cRep; });
+$('cfgSets').addEventListener('change',()=>$('totSet').textContent=$('cfgSets').value);
+$('cfgReps').addEventListener('change',()=>$('totRep').textContent=$('cfgReps').value);
+startBtn.addEventListener('click',start);
+</script>
+</body>
+</html>
